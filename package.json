@@ -1,0 +1,17 @@
+{
+  "name": "coursework-server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+       "dev": "node --watch-path=server.js --watch-path=db.js --watch-path=routes --env-file=.env server.js",
+    "start": "node --env-file=.env server.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.11.0"
+  }
+}

@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { db } from "../db.js";
 import { ROLES, publicUser, requireAuth, requireRole } from "../lib/session.js";
 import { cleanEmail, emailPattern, passwordProblem } from "../lib/validate.js";
+import { isSlug } from "../lib/classroom.js";
 
 const router = Router();
 
@@ -41,6 +42,15 @@ router.get("/stats", async (req, res) => {
     "SELECT COUNT(*) AS total, COALESCE(SUM(NOT handled), 0) AS unhandled FROM contact_messages"
   );
 
+  const [[classroom]] = await db.query(`
+    SELECT
+      (SELECT COUNT(*) FROM enrollments) AS enrollments,
+      (SELECT COUNT(*) FROM submissions) AS submissions,
+      (SELECT COUNT(*) FROM materials) AS materials,
+      (SELECT COUNT(*) FROM live_sessions WHERE starts_at >= NOW()) AS upcomingSessions,
+      (SELECT COUNT(*) FROM quiz_attempts) AS quizAttempts
+  `);
+
   const users = Object.fromEntries(ROLES.map((r) => [r, 0]));
   for (const row of byRole) users[row.role] = row.n;
 
@@ -49,6 +59,7 @@ router.get("/stats", async (req, res) => {
     signups: { last7: Number(signups.last7 ?? 0), last30: Number(signups.last30 ?? 0) },
     recentUsers: recent.map(userRow),
     messages: { total: messages.total, unhandled: Number(messages.unhandled) },
+    classroom,
   });
 });
 
@@ -147,6 +158,50 @@ router.delete("/users/:id", async (req, res) => {
   }
 
   await db.query("DELETE FROM users WHERE id = ?", [target.id]);
+  res.json({ ok: true });
+});
+
+// --- Course teachers ---------------------------------------------------------
+
+// GET /api/admin/course-teachers — every teacher assignment, plus all teachers
+// so the panel can offer them in a dropdown.
+router.get("/course-teachers", async (req, res) => {
+  const [assignments] = await db.query(
+    `SELECT t.course_slug, t.assigned_at, u.id, u.name, u.email,
+       (SELECT COUNT(*) FROM enrollments e WHERE e.course_slug = t.course_slug) AS students
+     FROM course_teachers t JOIN users u ON u.id = t.teacher_id ORDER BY t.course_slug, u.name`
+  );
+  const [teachers] = await db.query("SELECT id, name, email FROM users WHERE role = 'teacher' ORDER BY name");
+  const [enrollments] = await db.query("SELECT course_slug, COUNT(*) AS n FROM enrollments GROUP BY course_slug");
+  res.json({
+    assignments: assignments.map((a) => ({
+      courseSlug: a.course_slug,
+      teacher: { id: a.id, name: a.name, email: a.email },
+      assignedAt: a.assigned_at,
+    })),
+    teachers,
+    enrollments: Object.fromEntries(enrollments.map((e) => [e.course_slug, e.n])),
+  });
+});
+
+// POST /api/admin/course-teachers — { courseSlug, teacherId }
+router.post("/course-teachers", async (req, res) => {
+  const courseSlug = String(req.body?.courseSlug ?? "");
+  if (!isSlug(courseSlug)) return res.status(400).json({ error: "Choose a course." });
+  const teacher = await findUser(req.body?.teacherId);
+  if (!teacher || teacher.role !== "teacher") {
+    return res.status(400).json({ error: "Choose a teacher. Give them the teacher role first if needed." });
+  }
+  await db.query("INSERT IGNORE INTO course_teachers (course_slug, teacher_id) VALUES (?, ?)", [courseSlug, teacher.id]);
+  res.status(201).json({ ok: true });
+});
+
+// DELETE /api/admin/course-teachers/:slug/:teacherId
+router.delete("/course-teachers/:slug/:teacherId", async (req, res) => {
+  await db.query("DELETE FROM course_teachers WHERE course_slug = ? AND teacher_id = ?", [
+    req.params.slug,
+    req.params.teacherId,
+  ]);
   res.json({ ok: true });
 });
 

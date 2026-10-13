@@ -1,7 +1,9 @@
 import express from "express";
 import cookieParser from "cookie-parser";
 import { db } from "./db.js";
+import adminRoutes from "./routes/admin.js";
 import authRoutes from "./routes/auth.js";
+import contactRoutes from "./routes/contact.js";
 
 if (!process.env.JWT_SECRET) {
   console.error("JWT_SECRET is missing. Add it to your .env file.");
@@ -14,6 +16,8 @@ app.use(express.json());   // read JSON request bodies
 app.use(cookieParser());   // read the login cookie
 
 app.use("/api/auth", authRoutes);
+app.use("/api/contact", contactRoutes);
+app.use("/api/admin", adminRoutes);
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });

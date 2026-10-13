@@ -48,11 +48,17 @@ router.get("/enrollments", async (req, res) => {
      FROM enrollments e WHERE e.student_id = ? ORDER BY COALESCE(last_activity, e.enrolled_at) DESC`,
     [req.user.id]
   );
+  // Which lessons are done, so pages can show checkmarks and the next lesson.
+  const [done] = await db.query(
+    "SELECT course_slug, lesson_index FROM lesson_progress WHERE student_id = ? ORDER BY lesson_index",
+    [req.user.id]
+  );
   res.json({
     enrollments: rows.map((r) => ({
       slug: r.course_slug,
       enrolledAt: r.enrolled_at,
       lessonsDone: r.lessons_done,
+      completedLessons: done.filter((d) => d.course_slug === r.course_slug).map((d) => d.lesson_index),
       lastActivity: r.last_activity,
     })),
   });

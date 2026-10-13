@@ -1,4 +1,5 @@
--- Run this once to create the database and the users table.
+-- Run this once to create the database and the users table,
+-- then run `npm run migrate` to apply everything in migrations/.
 
 CREATE DATABASE IF NOT EXISTS coursework;
 USE coursework;

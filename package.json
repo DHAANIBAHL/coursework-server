@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-       "dev": "node --watch-path=server.js --watch-path=db.js --watch-path=routes --env-file=.env server.js",
-    "start": "node --env-file=.env server.js"
+    "dev": "node --watch-path=server.js --watch-path=db.js --watch-path=routes --watch-path=lib --env-file=.env server.js",
+    "start": "node --env-file=.env server.js",
+    "migrate": "node --env-file=.env scripts/migrate.js",
+    "set-role": "node --env-file=.env scripts/set-role.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",

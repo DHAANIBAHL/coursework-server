@@ -1,31 +1,11 @@
 import { Router } from "express";
 import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
 import { db } from "../db.js";
+import { COOKIE_NAME, endSession, getSessionUser, publicUser, startSession } from "../lib/session.js";
 
 const router = Router();
 
-const COOKIE_NAME = "coursework_token";
-const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-// httpOnly means JavaScript in the browser can't read the cookie,
-// which protects the login token from being stolen by injected scripts.
-const cookieOptions = {
-  httpOnly: true,
-  sameSite: "lax",
-  secure: process.env.NODE_ENV === "production",
-};
-
-function startSession(res, user) {
-  const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: "7d" });
-  res.cookie(COOKIE_NAME, token, { ...cookieOptions, maxAge: SEVEN_DAYS });
-}
-
-// Only these fields are ever sent to the browser — never the password hash.
-function publicUser(user) {
-  return { id: user.id, name: user.name, email: user.email, role: user.role };
-}
 
 // POST /api/auth/signup
 router.post("/signup", async (req, res) => {
@@ -98,28 +78,16 @@ router.post("/login", async (req, res) => {
 
 // POST /api/auth/logout
 router.post("/logout", (req, res) => {
-  res.clearCookie(COOKIE_NAME, cookieOptions);
+  endSession(res);
   res.json({ ok: true });
 });
 
 // GET /api/auth/me — who is logged in right now?
 router.get("/me", async (req, res) => {
-  const token = req.cookies[COOKIE_NAME];
-  if (!token) return res.json({ user: null });
-
-  try {
-    const { id } = jwt.verify(token, process.env.JWT_SECRET);
-    const [rows] = await db.query("SELECT id, name, email, role FROM users WHERE id = ?", [id]);
-    if (rows.length === 0) {
-      res.clearCookie(COOKIE_NAME, cookieOptions);
-      return res.json({ user: null });
-    }
-    res.json({ user: publicUser(rows[0]) });
-  } catch {
-    // Expired or tampered token
-    res.clearCookie(COOKIE_NAME, cookieOptions);
-    res.json({ user: null });
-  }
+  const user = await getSessionUser(req);
+  // A cookie that no longer works (expired, tampered, deleted account) is cleared.
+  if (!user && req.cookies[COOKIE_NAME]) endSession(res);
+  res.json({ user: user ? publicUser(user) : null });
 });
 
 export default router;

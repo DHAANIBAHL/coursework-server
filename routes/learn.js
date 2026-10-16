@@ -183,7 +183,7 @@ router.get("/dashboard", async (req, res) => {
     [me, slugs]
   );
   const [quizzesDue] = await db.query(
-    `SELECT q.id, q.course_slug, q.title, q.due_at
+    `SELECT q.id, q.course_slug, q.title, q.due_at, q.kind
      FROM class_quizzes q
      WHERE q.course_slug IN (?) AND q.published AND q.due_at IS NOT NULL
        AND NOT EXISTS (SELECT 1 FROM quiz_attempts t WHERE t.student_id = ? AND t.quiz_key = CONCAT('class:', q.id))
@@ -224,7 +224,7 @@ router.get("/dashboard", async (req, res) => {
       status: a.grade !== null ? "graded" : a.submission_id ? "submitted" : new Date(a.due_at) < new Date() ? "overdue" : "todo",
     })),
     ...quizzesDue.map((q) => ({
-      type: "quiz",
+      type: q.kind === "test" ? "test" : "quiz",
       id: q.id,
       courseSlug: q.course_slug,
       title: q.title,
@@ -295,26 +295,108 @@ router.post("/assignments/:id/submission", handleUpload(submissionUpload), async
   }
 });
 
-// --- Quizzes --------------------------------------------------------------------------
+// --- Quizzes and tests ----------------------------------------------------------------
+// Quizzes: open, answer, submit (attempts may be limited).
+// Tests: questions stay hidden until the student presses Start, which opens a
+// quiz_sessions row; the submission must arrive before the time limit (plus a
+// short grace period for slow connections), and each start uses an attempt.
 
-// GET /api/learn/quizzes/:id — a published teacher quiz, without the answers.
-router.get("/quizzes/:id", async (req, res) => {
+const GRACE_SECONDS = 30;
+
+async function attemptsUsed(quiz, studentId) {
+  const [[{ n }]] =
+    quiz.kind === "test"
+      ? await db.query("SELECT COUNT(*) AS n FROM quiz_sessions WHERE quiz_id = ? AND student_id = ?", [quiz.id, studentId])
+      : await db.query("SELECT COUNT(*) AS n FROM quiz_attempts WHERE quiz_key = ? AND student_id = ?", [`class:${quiz.id}`, studentId]);
+  return n;
+}
+
+// The student's unfinished test attempt that still has time left, if any.
+async function openSession(quiz, studentId) {
+  const [[session]] = await db.query(
+    `SELECT * FROM quiz_sessions
+     WHERE quiz_id = ? AND student_id = ? AND submitted_at IS NULL
+       AND started_at + INTERVAL ? MINUTE + INTERVAL ? SECOND >= NOW()
+     ORDER BY started_at DESC LIMIT 1`,
+    [quiz.id, studentId, quiz.time_limit_min ?? 0, GRACE_SECONDS]
+  );
+  return session ?? null;
+}
+
+const endsAt = (quiz, session) => new Date(new Date(session.started_at).getTime() + quiz.time_limit_min * 60e3);
+
+async function loadPublished(req, res) {
   const row = await loadForStudent(req, res, "class_quizzes");
+  if (!row) return null;
+  if (!row.published) {
+    res.status(404).json({ error: "That quiz isn't available." });
+    return null;
+  }
+  return row;
+}
+
+// GET /api/learn/quizzes/:id — the quiz without answers. For a test, the
+// questions are only included while an attempt is in progress.
+router.get("/quizzes/:id", async (req, res) => {
+  const row = await loadPublished(req, res);
   if (!row) return;
-  if (!row.published) return res.status(404).json({ error: "That quiz isn't available." });
   const [attempts] = await db.query(
     "SELECT score, total, created_at FROM quiz_attempts WHERE student_id = ? AND quiz_key = ? ORDER BY created_at DESC",
     [req.user.id, `class:${row.id}`]
   );
-  res.json({ quiz: out.classQuiz(row, { forStudent: true }), attempts });
+  const used = await attemptsUsed(row, req.user.id);
+  const quiz = out.classQuiz(row, { forStudent: true });
+  let session = null;
+  if (row.kind === "test") {
+    const open = await openSession(row, req.user.id);
+    session = open ? { id: open.id, startedAt: open.started_at, endsAt: endsAt(row, open) } : null;
+    if (!open) quiz.questions = [];
+  }
+  res.json({
+    quiz,
+    attempts,
+    attemptsUsed: used,
+    attemptsLeft: row.max_attempts === null ? null : Math.max(0, row.max_attempts - used),
+    session,
+  });
+});
+
+// POST /api/learn/quizzes/:id/start — begin a test attempt (starts the clock).
+// Returns the questions and when time runs out. Resumes an attempt in progress.
+router.post("/quizzes/:id/start", async (req, res) => {
+  const row = await loadPublished(req, res);
+  if (!row) return;
+  if (row.kind !== "test") return res.status(400).json({ error: "Only tests need to be started." });
+
+  let session = await openSession(row, req.user.id);
+  if (!session) {
+    if (row.max_attempts !== null && (await attemptsUsed(row, req.user.id)) >= row.max_attempts) {
+      return res.status(409).json({ error: "You've used all your attempts for this test.", code: "NO_ATTEMPTS_LEFT" });
+    }
+    const [result] = await db.query("INSERT INTO quiz_sessions (quiz_id, student_id) VALUES (?, ?)", [row.id, req.user.id]);
+    [[session]] = await db.query("SELECT * FROM quiz_sessions WHERE id = ?", [result.insertId]);
+  }
+  res.status(201).json({
+    quiz: out.classQuiz(row, { forStudent: true }),
+    session: { id: session.id, startedAt: session.started_at, endsAt: endsAt(row, session) },
+  });
 });
 
 // POST /api/learn/quizzes/:id/attempts — { answers: { q1: "b", ... } }.
 // Graded here so the correct answers never reach the browser before submitting.
 router.post("/quizzes/:id/attempts", async (req, res) => {
-  const row = await loadForStudent(req, res, "class_quizzes");
+  const row = await loadPublished(req, res);
   if (!row) return;
-  if (!row.published) return res.status(404).json({ error: "That quiz isn't available." });
+
+  let session = null;
+  if (row.kind === "test") {
+    session = await openSession(row, req.user.id);
+    if (!session) {
+      return res.status(409).json({ error: "Time is up for this attempt, or it was never started.", code: "TIME_UP" });
+    }
+  } else if (row.max_attempts !== null && (await attemptsUsed(row, req.user.id)) >= row.max_attempts) {
+    return res.status(409).json({ error: "You've used all your attempts for this quiz.", code: "NO_ATTEMPTS_LEFT" });
+  }
 
   const questions = parseJson(row.questions);
   const given = req.body?.answers ?? {};
@@ -325,6 +407,8 @@ router.post("/quizzes/:id/attempts", async (req, res) => {
     "INSERT INTO quiz_attempts (student_id, course_slug, quiz_key, score, total, answers) VALUES (?, ?, ?, ?, ?, ?)",
     [req.user.id, row.course_slug, `class:${row.id}`, score, questions.length, JSON.stringify(answers)]
   );
+  if (session) await db.query("UPDATE quiz_sessions SET submitted_at = NOW() WHERE id = ?", [session.id]);
+
   res.status(201).json({
     score,
     total: questions.length,

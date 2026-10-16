@@ -450,6 +450,19 @@ router.patch("/sessions/:id", async (req, res) => {
   res.json({ session: out.liveSession(updated) });
 });
 
+// POST /api/teach/sessions/:id/end — end a live class now, so students stop
+// seeing "Live now". Sets the length to the whole minutes elapsed so far.
+router.post("/sessions/:id/end", async (req, res) => {
+  const row = await loadOwned(req, res, "live_sessions");
+  if (!row) return;
+  await db.query(
+    "UPDATE live_sessions SET duration_min = GREATEST(0, FLOOR(TIMESTAMPDIFF(SECOND, starts_at, NOW()) / 60)) WHERE id = ?",
+    [row.id]
+  );
+  const [[updated]] = await db.query("SELECT * FROM live_sessions WHERE id = ?", [row.id]);
+  res.json({ session: out.liveSession(updated) });
+});
+
 router.delete("/sessions/:id", async (req, res) => {
   const row = await loadOwned(req, res, "live_sessions");
   if (!row) return;

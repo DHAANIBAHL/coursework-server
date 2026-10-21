@@ -119,8 +119,15 @@ router.get("/courses/:slug", async (req, res) => {
   );
   const [materials] = await db.query("SELECT * FROM materials WHERE course_slug = ? ORDER BY created_at DESC, id DESC", [slug]);
   const [announcements] = await db.query(
-    `SELECT a.*, u.name AS author_name FROM announcements a LEFT JOIN users u ON u.id = a.created_by
-     WHERE a.course_slug = ? ORDER BY a.created_at DESC, a.id DESC`,
+    `SELECT a.*, u.name AS author_name, (CASE a.related_type
+         WHEN 'assignment' THEN (SELECT title FROM assignments WHERE id = a.related_id)
+         WHEN 'quiz' THEN (SELECT title FROM class_quizzes WHERE id = a.related_id)
+         WHEN 'session' THEN (SELECT title FROM live_sessions WHERE id = a.related_id)
+         WHEN 'material' THEN (SELECT title FROM materials WHERE id = a.related_id)
+       END) AS related_title
+     FROM announcements a LEFT JOIN users u ON u.id = a.created_by
+     WHERE a.course_slug = ? AND a.publish_at <= NOW()
+     ORDER BY a.pinned DESC, a.publish_at DESC, a.id DESC`,
     [slug]
   );
   const [assignments] = await db.query("SELECT * FROM assignments WHERE course_slug = ? ORDER BY due_at", [slug]);
@@ -197,8 +204,15 @@ router.get("/dashboard", async (req, res) => {
     [slugs]
   );
   const [announcements] = await db.query(
-    `SELECT a.*, u.name AS author_name FROM announcements a LEFT JOIN users u ON u.id = a.created_by
-     WHERE a.course_slug IN (?) ORDER BY a.created_at DESC, a.id DESC LIMIT 8`,
+    `SELECT a.*, u.name AS author_name, (CASE a.related_type
+         WHEN 'assignment' THEN (SELECT title FROM assignments WHERE id = a.related_id)
+         WHEN 'quiz' THEN (SELECT title FROM class_quizzes WHERE id = a.related_id)
+         WHEN 'session' THEN (SELECT title FROM live_sessions WHERE id = a.related_id)
+         WHEN 'material' THEN (SELECT title FROM materials WHERE id = a.related_id)
+       END) AS related_title
+     FROM announcements a LEFT JOIN users u ON u.id = a.created_by
+     WHERE a.course_slug IN (?) AND a.publish_at <= NOW()
+     ORDER BY a.pinned DESC, a.publish_at DESC, a.id DESC LIMIT 8`,
     [slugs]
   );
   const [grades] = await db.query(

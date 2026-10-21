@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from "../lib/session.js";
 import {
   badRequest,
   canTeach,
+  wholeSeconds,
   cleanQuestions,
   dateTime,
   httpUrl,
@@ -111,8 +112,14 @@ router.get("/courses/:slug", requireTeacherOf, async (req, res) => {
   );
   const [materials] = await db.query("SELECT * FROM materials WHERE course_slug = ? ORDER BY created_at DESC, id DESC", [slug]);
   const [announcements] = await db.query(
-    `SELECT a.*, u.name AS author_name FROM announcements a LEFT JOIN users u ON u.id = a.created_by
-     WHERE a.course_slug = ? ORDER BY a.created_at DESC, a.id DESC`,
+    `SELECT a.*, u.name AS author_name, (CASE a.related_type
+         WHEN 'assignment' THEN (SELECT title FROM assignments WHERE id = a.related_id)
+         WHEN 'quiz' THEN (SELECT title FROM class_quizzes WHERE id = a.related_id)
+         WHEN 'session' THEN (SELECT title FROM live_sessions WHERE id = a.related_id)
+         WHEN 'material' THEN (SELECT title FROM materials WHERE id = a.related_id)
+       END) AS related_title
+     FROM announcements a LEFT JOIN users u ON u.id = a.created_by
+     WHERE a.course_slug = ? ORDER BY a.pinned DESC, COALESCE(a.publish_at, a.created_at) DESC, a.id DESC`,
     [slug]
   );
   const [assignments] = await db.query(
@@ -206,18 +213,78 @@ router.delete("/materials/:id", async (req, res) => {
 
 // --- Announcements -------------------------------------------------------------
 
-router.post("/courses/:slug/announcements", requireTeacherOf, async (req, res) => {
-  const title = requiredText(req.body?.title, { max: 200, label: "A title" });
-  const body = requiredText(req.body?.body, { max: 10000, label: "The announcement" });
-  const [result] = await db.query(
-    "INSERT INTO announcements (course_slug, title, body, created_by) VALUES (?, ?, ?, ?)",
-    [req.params.slug, title, body, req.user.id]
-  );
+const CATEGORIES = ["general", "assignment", "quiz", "test", "live", "video", "material"];
+// Which table a related item lives in. Quizzes and tests are both class_quizzes.
+const RELATED_TABLES = { assignment: "assignments", quiz: "class_quizzes", session: "live_sessions", material: "materials" };
+
+// Validates an announcement body. `when`: "now" | "schedule" (with publishAt) | "draft".
+async function announcementInput(body, slug) {
+  const category = CATEGORIES.includes(body?.category) ? body.category : "general";
+  let related = null;
+  if (body?.related?.type) {
+    const table = RELATED_TABLES[body.related.type];
+    if (!table) throw badRequest("That link isn't a valid item.");
+    const [[item]] = await db.query(`SELECT id FROM ${table} WHERE id = ? AND course_slug = ?`, [body.related.id, slug]);
+    if (!item) throw badRequest("The linked item isn't in this course.");
+    related = { type: body.related.type, id: item.id };
+  }
+  let publishAt;
+  if (body?.when === "draft") publishAt = null;
+  else if (body?.when === "schedule") {
+    publishAt = dateTime(body?.publishAt, "A time to post it");
+    if (publishAt <= new Date()) throw badRequest("Choose a time in the future, or post it now.");
+  } else publishAt = wholeSeconds();
+  return {
+    title: requiredText(body?.title, { max: 200, label: "A title" }),
+    body: requiredText(body?.body, { max: 10000, label: "The announcement" }),
+    category,
+    related,
+    pinned: Boolean(body?.pinned),
+    publishAt,
+  };
+}
+
+async function loadAnnouncement(id) {
   const [[row]] = await db.query(
-    "SELECT a.*, u.name AS author_name FROM announcements a LEFT JOIN users u ON u.id = a.created_by WHERE a.id = ?",
-    [result.insertId]
+    `SELECT a.*, u.name AS author_name, (CASE a.related_type
+         WHEN 'assignment' THEN (SELECT title FROM assignments WHERE id = a.related_id)
+         WHEN 'quiz' THEN (SELECT title FROM class_quizzes WHERE id = a.related_id)
+         WHEN 'session' THEN (SELECT title FROM live_sessions WHERE id = a.related_id)
+         WHEN 'material' THEN (SELECT title FROM materials WHERE id = a.related_id)
+       END) AS related_title
+     FROM announcements a LEFT JOIN users u ON u.id = a.created_by WHERE a.id = ?`,
+    [id]
   );
-  res.status(201).json({ announcement: out.announcement(row) });
+  return out.announcement(row);
+}
+
+// POST /api/teach/courses/:slug/announcements — post now, schedule, or save a draft.
+router.post("/courses/:slug/announcements", requireTeacherOf, async (req, res) => {
+  const a = await announcementInput(req.body, req.params.slug);
+  const [result] = await db.query(
+    `INSERT INTO announcements (course_slug, title, body, category, related_type, related_id, pinned, publish_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [req.params.slug, a.title, a.body, a.category, a.related?.type ?? null, a.related?.id ?? null, a.pinned, a.publishAt, req.user.id]
+  );
+  res.status(201).json({ announcement: await loadAnnouncement(result.insertId) });
+});
+
+// PATCH /api/teach/announcements/:id — edit, reschedule, post now, or pin.
+// { pinned } alone just toggles the pin; anything else replaces the announcement.
+router.patch("/announcements/:id", async (req, res) => {
+  const row = await loadOwned(req, res, "announcements");
+  if (!row) return;
+  if (Object.keys(req.body ?? {}).length === 1 && "pinned" in req.body) {
+    await db.query("UPDATE announcements SET pinned = ? WHERE id = ?", [Boolean(req.body.pinned), row.id]);
+  } else {
+    const a = await announcementInput(req.body, row.course_slug);
+    await db.query(
+      `UPDATE announcements SET title = ?, body = ?, category = ?, related_type = ?, related_id = ?, pinned = ?, publish_at = ?
+       WHERE id = ?`,
+      [a.title, a.body, a.category, a.related?.type ?? null, a.related?.id ?? null, a.pinned, a.publishAt, row.id]
+    );
+  }
+  res.json({ announcement: await loadAnnouncement(row.id) });
 });
 
 router.delete("/announcements/:id", async (req, res) => {

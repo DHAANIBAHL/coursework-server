@@ -2,6 +2,7 @@ import express from "express";
 import cookieParser from "cookie-parser";
 import { db } from "./db.js";
 import adminRoutes from "./routes/admin.js";
+import aiRoutes from "./routes/ai.js";
 import authRoutes from "./routes/auth.js";
 import contactRoutes from "./routes/contact.js";
 import fileRoutes from "./routes/files.js";
@@ -21,6 +22,7 @@ app.use(cookieParser());   // read the login cookie
 app.use("/api/auth", authRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/teach/ai", aiRoutes);
 app.use("/api/teach", teachRoutes);
 app.use("/api/learn", learnRoutes);
 app.use("/api/files", fileRoutes);

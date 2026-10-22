@@ -18,6 +18,7 @@ import {
 } from "../lib/classroom.js";
 import { deleteUpload, fileFields, handleUpload, materialUpload } from "../lib/uploads.js";
 import * as out from "../lib/serialize.js";
+import { studentClassView } from "../lib/classView.js";
 
 // Everything a teacher does for the courses they teach. Admins can use it for any course.
 const router = Router();
@@ -169,6 +170,13 @@ router.get("/courses/:slug", requireTeacherOf, async (req, res) => {
     })),
     sessions: sessions.map(out.liveSession),
   });
+});
+
+// GET /api/teach/courses/:slug/student-view — exactly what an enrolled
+// student sees in this course (posted announcements, published quizzes
+// without answers), as a brand-new student with no progress. Read-only preview.
+router.get("/courses/:slug/student-view", requireTeacherOf, async (req, res) => {
+  res.json({ ...(await studentClassView(req.params.slug, null)), preview: true });
 });
 
 // --- Materials ---------------------------------------------------------------

@@ -1,14 +1,14 @@
 import { Router } from "express";
 import { requireAuth, requireRole } from "../lib/session.js";
 import { badRequest, canTeach, cleanQuestions, isSlug } from "../lib/classroom.js";
-import { AiError, aiConfigured, chatJson } from "../lib/ai.js";
+import { AiError, aiConfigured, aiInfo, chatJson } from "../lib/ai.js";
 
 // The teacher's quiz assistant: a chat where teachers describe a topic and get
 // multiple-choice questions back, ready to save as a draft quiz or test.
 const router = Router();
 router.use(requireAuth, requireRole("teacher", "admin"));
 
-// Simple per-user limit so one teacher can't burn through the Groq quota.
+// Simple per-user limit so one teacher can't burn through the AI provider's quota.
 const WINDOW_MS = 60_000;
 const MAX_PER_WINDOW = 10;
 const recent = new Map(); // userId -> [timestamps]
@@ -59,9 +59,9 @@ function cleanMessages(value) {
   return messages;
 }
 
-// GET /api/teach/ai/status — whether the assistant is configured.
+// GET /api/teach/ai/status — whether the assistant is configured, and with what.
 router.get("/status", (req, res) => {
-  res.json({ configured: aiConfigured() });
+  res.json({ configured: aiConfigured(), ...aiInfo() });
 });
 
 // POST /api/teach/ai/quiz-chat — { courseSlug, courseTitle, lessonTitles, messages }

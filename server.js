@@ -4,6 +4,9 @@ import { db } from "./db.js";
 import adminRoutes from "./routes/admin.js";
 import authRoutes from "./routes/auth.js";
 import contactRoutes from "./routes/contact.js";
+import fileRoutes from "./routes/files.js";
+import learnRoutes from "./routes/learn.js";
+import teachRoutes from "./routes/teach.js";
 
 if (!process.env.JWT_SECRET) {
   console.error("JWT_SECRET is missing. Add it to your .env file.");
@@ -18,13 +21,20 @@ app.use(cookieParser());   // read the login cookie
 app.use("/api/auth", authRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/teach", teachRoutes);
+app.use("/api/learn", learnRoutes);
+app.use("/api/files", fileRoutes);
 
 app.get("/api/health", (req, res) => {
   res.json({ ok: true });
 });
 
-// Any error thrown in a route ends up here.
+// Any error thrown in a route ends up here. Input problems (status 400,
+// thrown by the helpers in lib/classroom.js) go back to the user as-is.
 app.use((err, req, res, next) => {
+  if (err.status >= 400 && err.status < 500) {
+    return res.status(err.status).json({ error: err.message });
+  }
   console.error(err);
   res.status(500).json({ error: "Something went wrong on the server." });
 });

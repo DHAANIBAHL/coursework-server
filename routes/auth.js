@@ -2,10 +2,9 @@ import { Router } from "express";
 import bcrypt from "bcryptjs";
 import { db } from "../db.js";
 import { COOKIE_NAME, endSession, getSessionUser, publicUser, startSession } from "../lib/session.js";
+import { emailPattern, passwordProblem } from "../lib/validate.js";
 
 const router = Router();
-
-const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // POST /api/auth/signup
 router.post("/signup", async (req, res) => {
@@ -16,8 +15,8 @@ router.post("/signup", async (req, res) => {
   // Check again on the server — the browser's checks can be skipped.
   if (!name) return res.status(400).json({ error: "Enter your name." });
   if (!emailPattern.test(email)) return res.status(400).json({ error: "Enter a valid email address." });
-  if (password.length < 8) return res.status(400).json({ error: "Password must be at least 8 characters." });
-  if (password.length > 72) return res.status(400).json({ error: "Password must be 72 characters or fewer." });
+  const badPassword = passwordProblem(password);
+  if (badPassword) return res.status(400).json({ error: badPassword });
 
   const [existing] = await db.query("SELECT id FROM users WHERE email = ?", [email]);
   if (existing.length > 0) {

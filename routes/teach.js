@@ -326,21 +326,32 @@ router.patch("/submissions/:id", async (req, res) => {
 
 // --- Teacher-written quizzes ----------------------------------------------------
 
+// Quizzes are quick checks; tests are timed and usually allow one attempt.
 function quizInput(body) {
+  const kind = body?.kind === "test" ? "test" : "quiz";
+  const blank = (v) => v === undefined || v === null || v === "";
   return {
+    kind,
     title: requiredText(body?.title, { max: 200, label: "A title" }),
     description: text(body?.description, { max: 5000, label: "Description" }),
     dueAt: dateTime(body?.dueAt, "Due date", { required: false }),
     questions: cleanQuestions(body?.questions),
     published: Boolean(body?.published),
+    timeLimitMin:
+      kind === "test" ? integer(body?.timeLimitMin, { min: 1, max: 600, label: "Time limit (minutes)", fallback: 30 }) : null,
+    maxAttempts: blank(body?.maxAttempts)
+      ? kind === "test"
+        ? 1
+        : null
+      : integer(body.maxAttempts, { min: 1, max: 50, label: "Attempts allowed" }),
   };
 }
 
 router.post("/courses/:slug/quizzes", requireTeacherOf, async (req, res) => {
   const q = quizInput(req.body);
   const [result] = await db.query(
-    "INSERT INTO class_quizzes (course_slug, title, description, due_at, questions, published, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-    [req.params.slug, q.title, q.description, q.dueAt, JSON.stringify(q.questions), q.published, req.user.id]
+    "INSERT INTO class_quizzes (course_slug, kind, title, description, due_at, questions, published, time_limit_min, max_attempts, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    [req.params.slug, q.kind, q.title, q.description, q.dueAt, JSON.stringify(q.questions), q.published, q.timeLimitMin, q.maxAttempts, req.user.id]
   );
   const [[row]] = await db.query("SELECT * FROM class_quizzes WHERE id = ?", [result.insertId]);
   res.status(201).json({ quiz: out.classQuiz(row) });
@@ -355,8 +366,8 @@ router.patch("/quizzes/:id", async (req, res) => {
   } else {
     const q = quizInput(req.body);
     await db.query(
-      "UPDATE class_quizzes SET title = ?, description = ?, due_at = ?, questions = ?, published = ? WHERE id = ?",
-      [q.title, q.description, q.dueAt, JSON.stringify(q.questions), q.published, row.id]
+      "UPDATE class_quizzes SET kind = ?, title = ?, description = ?, due_at = ?, questions = ?, published = ?, time_limit_min = ?, max_attempts = ? WHERE id = ?",
+      [q.kind, q.title, q.description, q.dueAt, JSON.stringify(q.questions), q.published, q.timeLimitMin, q.maxAttempts, row.id]
     );
   }
   const [[updated]] = await db.query("SELECT * FROM class_quizzes WHERE id = ?", [row.id]);
@@ -434,6 +445,19 @@ router.patch("/sessions/:id", async (req, res) => {
   await db.query(
     "UPDATE live_sessions SET title = ?, description = ?, starts_at = ?, duration_min = ?, meeting_url = ? WHERE id = ?",
     [s.title, s.description, s.startsAt, s.durationMin, s.meetingUrl, row.id]
+  );
+  const [[updated]] = await db.query("SELECT * FROM live_sessions WHERE id = ?", [row.id]);
+  res.json({ session: out.liveSession(updated) });
+});
+
+// POST /api/teach/sessions/:id/end — end a live class now, so students stop
+// seeing "Live now". Sets the length to the whole minutes elapsed so far.
+router.post("/sessions/:id/end", async (req, res) => {
+  const row = await loadOwned(req, res, "live_sessions");
+  if (!row) return;
+  await db.query(
+    "UPDATE live_sessions SET duration_min = GREATEST(0, FLOOR(TIMESTAMPDIFF(SECOND, starts_at, NOW()) / 60)) WHERE id = ?",
+    [row.id]
   );
   const [[updated]] = await db.query("SELECT * FROM live_sessions WHERE id = ?", [row.id]);
   res.json({ session: out.liveSession(updated) });

@@ -7,7 +7,8 @@
     "dev": "node --watch-path=server.js --watch-path=db.js --watch-path=routes --watch-path=lib --env-file=.env server.js",
     "start": "node --env-file=.env server.js",
     "migrate": "node --env-file=.env scripts/migrate.js",
-    "set-role": "node --env-file=.env scripts/set-role.js"
+    "set-role": "node --env-file=.env scripts/set-role.js",
+    "seed:demo": "node --env-file=.env scripts/seed-demo.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",

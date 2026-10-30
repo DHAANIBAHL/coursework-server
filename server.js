@@ -8,6 +8,7 @@ import contactRoutes from "./routes/contact.js";
 import courseRoutes from "./routes/courses.js";
 import fileRoutes from "./routes/files.js";
 import learnRoutes from "./routes/learn.js";
+import searchRoutes from "./routes/search.js";
 import teachRoutes from "./routes/teach.js";
 
 if (!process.env.JWT_SECRET) {
@@ -23,6 +24,7 @@ app.use(cookieParser());   // read the login cookie
 app.use("/api/auth", authRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/courses", courseRoutes);
+app.use("/api/search", searchRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/teach/ai", aiRoutes);
 app.use("/api/teach", teachRoutes);

@@ -7,14 +7,14 @@
 //
 // Demo accounts use @demo.coursework.test emails; everything they created goes
 // with them on --remove. Real accounts and their data are never touched.
-// Course lessons and built-in quizzes are read from ../coursework-app (or
-// COURSEWORK_APP), so the demo progress matches what the website shows.
+// Course lessons and built-in quizzes are read from the course catalog
+// database (CATALOG_DB_NAME, default learning_platform), so the demo progress
+// matches what the website shows.
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { pathToFileURL } from "url";
 import bcrypt from "bcryptjs";
-import { db } from "../db.js";
+import { catalogDb, db } from "../db.js";
 import { cleanQuestions } from "../lib/classroom.js";
 import { UPLOAD_DIR } from "../lib/uploads.js";
 import * as demo from "./demo-data.js";
@@ -136,25 +136,44 @@ async function removeDemo() {
 
 // --- Seed -----------------------------------------------------------------------------
 
+// Every published course from the catalog database: { slug, lessonCount,
+// quizzes: [{ slug, end, questionCount }] }, where `end` is the position of the
+// last lesson a built-in quiz covers. Courses and quizzes keep catalog order.
 async function loadCourses() {
-  const appDir = process.env.COURSEWORK_APP || path.join(import.meta.dirname, "..", "..", "coursework-app");
-  const file = path.join(appDir, "src", "data", "courses.js");
-  if (!fs.existsSync(file)) {
-    throw new Error(`Can't find the course list at ${file}. Set COURSEWORK_APP to the coursework-app folder.`);
+  let courses, quizzes;
+  try {
+    [[courses], [quizzes]] = await Promise.all([
+      catalogDb.query(
+        `SELECT c.id, c.slug, (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id) AS lesson_count
+           FROM courses c WHERE c.status = 'published' ORDER BY c.position, c.id`
+      ),
+      catalogDb.query(
+        `SELECT q.course_id, q.slug, last.position AS end,
+                (SELECT COUNT(*) FROM quiz_questions qq WHERE qq.quiz_id = q.id) AS question_count
+           FROM quizzes q LEFT JOIN lessons last ON last.id = q.last_lesson_id
+          WHERE q.origin = 'catalog' AND q.published ORDER BY q.course_id, q.id`
+      ),
+    ]);
+  } catch (err) {
+    throw new Error(
+      `Can't read the course catalog (${err.message}). Load coursework-app/database/schema.sql and seed.sql into CATALOG_DB_NAME (default learning_platform).`
+    );
   }
-  return (await import(pathToFileURL(file).href)).courses;
+  return courses.map((c) => ({
+    slug: c.slug,
+    lessonCount: c.lesson_count,
+    quizzes: quizzes
+      .filter((q) => q.course_id === c.id)
+      .map((q) => ({ slug: q.slug, end: q.end ?? Infinity, questionCount: q.question_count })),
+  }));
 }
-
-// The last lesson a built-in quiz covers, from its "Lessons 1–6: …" description.
-const quizEnd = (quiz) => Number(/Lessons\s+\d+\s*[–-]\s*(\d+)/.exec(quiz.description)?.[1] ?? Infinity);
 
 async function insert(table, row) {
   const [result] = await db.query(`INSERT INTO ${table} SET ?`, [row]);
   return result.insertId;
 }
 
-async function seedDemo() {
-  const allCourses = await loadCourses();
+async function seedDemo(allCourses) {
   const bySlug = new Map(allCourses.map((c) => [c.slug, c]));
   const only = args.includes("--courses") ? args[args.indexOf("--courses") + 1]?.split(",") ?? [] : null;
   const taught = demo.courses.filter((c) => !only || only.includes(c.slug));
@@ -206,7 +225,7 @@ async function seedDemo() {
       await insert("enrollments", { student_id: s.id, course_slug: slug, enrolled_at: since });
       const course = bySlug.get(slug);
       const daysIn = (NOW - since) / DAY;
-      const done = Math.round(clamp((daysIn / 35) * s.pace * between(0.8, 1.2), 0, 1) * course.lessons.length);
+      const done = Math.round(clamp((daysIn / 35) * s.pace * between(0.8, 1.2), 0, 1) * course.lessonCount);
       const finishedAt = [];
       for (let i = 0; i < done; i++) {
         const when = sometime(plus(since, (i / Math.max(done, 1)) * (NOW - since) * 0.9), plus(since, ((i + 1) / done) * (NOW - since)));
@@ -215,9 +234,9 @@ async function seedDemo() {
         await insert("lesson_progress", { student_id: s.id, course_slug: slug, lesson_index: i, completed_at: when });
       }
       for (const quiz of course.quizzes) {
-        const end = quizEnd(quiz);
+        const { end } = quiz;
         if (done < end || !chance(0.85)) continue;
-        const total = quiz.questions.length;
+        const total = quiz.questionCount;
         let score = Math.round(clamp(s.skill + between(-0.2, 0.1), 0.2, 1) * total);
         let when = sometime(finishedAt[end - 1], plus(finishedAt[end - 1], 2 * DAY));
         for (let attempt = 0; attempt < (score < total && chance(0.3) ? 2 : 1); attempt++) {
@@ -226,7 +245,7 @@ async function seedDemo() {
             when = sometime(when, plus(when, DAY));
           }
           count("quiz_attempts");
-          await insert("quiz_attempts", { student_id: s.id, course_slug: slug, quiz_key: `builtin:${quiz.id}`, score, total, answers: null, created_at: when });
+          await insert("quiz_attempts", { student_id: s.id, course_slug: slug, quiz_key: `builtin:${quiz.slug}`, score, total, answers: null, created_at: when });
         }
       }
     }
@@ -352,12 +371,14 @@ async function seedDemo() {
 // --- Run ------------------------------------------------------------------------------
 
 try {
+  // Read the catalog before touching anything, so a missing catalog changes nothing.
+  const allCourses = args.includes("--remove") ? null : await loadCourses();
   const removed = await removeDemo();
   if (args.includes("--remove")) {
     console.log(`Removed the demo data: ${removed.users} accounts, ${removed.messages} contact messages, ${removed.files} files.`);
   } else {
     if (removed.users) console.log(`Replaced the previous demo data (${removed.users} accounts).`);
-    const counts = await seedDemo();
+    const counts = await seedDemo(allCourses);
     console.log("Added demo data:");
     for (const [table, n] of Object.entries(counts)) console.log(`  ${table.padEnd(18)} ${n}`);
     console.log(`\nSign in with any demo account, password ${demo.DEMO_PASSWORD}:`);
@@ -371,4 +392,5 @@ try {
   process.exitCode = 1;
 } finally {
   await db.end();
+  await catalogDb.end().catch(() => {}); // already reported if the catalog failed
 }

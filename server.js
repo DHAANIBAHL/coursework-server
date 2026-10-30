@@ -7,6 +7,7 @@ import authRoutes from "./routes/auth.js";
 import contactRoutes from "./routes/contact.js";
 import courseRoutes from "./routes/courses.js";
 import fileRoutes from "./routes/files.js";
+import healthRoutes from "./routes/health.js";
 import learnRoutes from "./routes/learn.js";
 import searchRoutes from "./routes/search.js";
 import teachRoutes from "./routes/teach.js";
@@ -31,9 +32,7 @@ app.use("/api/teach", teachRoutes);
 app.use("/api/learn", learnRoutes);
 app.use("/api/files", fileRoutes);
 
-app.get("/api/health", (req, res) => {
-  res.json({ ok: true });
-});
+app.use("/api/health", healthRoutes);
 
 // Any error thrown in a route ends up here. Input problems (status 400,
 // thrown by the helpers in lib/classroom.js) go back to the user as-is.

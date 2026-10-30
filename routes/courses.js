@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { catalogDb } from "../db.js";
 import { isSlug } from "../lib/classroom.js";
+import { findCourse, loadQuiz, withoutAnswers } from "../lib/catalog.js";
 
 // The course catalog, read from the data-model database (CATALOG_DB_NAME,
 // learning_platform by default). Read-only and public: the same content
@@ -98,6 +99,17 @@ router.get("/:id", async (req, res) => {
       })),
     },
   });
+});
+
+// GET /api/courses/:id/quizzes/:quizId — a catalog quiz to take: questions
+// and options, but never which option is correct or the explanations.
+// Answers are checked by POST /api/learn/courses/:slug/builtin-quizzes/:quizId/grade.
+router.get("/:id/quizzes/:quizId", async (req, res) => {
+  const course = await findCourse(req.params.id);
+  if (!course) return notFound(res);
+  const quiz = await loadQuiz(course.id, req.params.quizId);
+  if (!quiz) return res.status(404).json({ error: "Quiz not found.", code: "QUIZ_NOT_FOUND" });
+  res.json({ course, quiz: withoutAnswers(quiz) });
 });
 
 function notFound(res) {

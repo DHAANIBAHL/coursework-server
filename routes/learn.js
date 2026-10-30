@@ -5,6 +5,7 @@ import { badRequest, integer, isEnrolled, isSlug, parseJson, text } from "../lib
 import { deleteUpload, fileFields, handleUpload, submissionUpload } from "../lib/uploads.js";
 import * as out from "../lib/serialize.js";
 import { studentClassView } from "../lib/classView.js";
+import { findCourse, grade, loadQuiz } from "../lib/catalog.js";
 
 // Everything a student does: joining courses, progress, submissions, quizzes.
 // Any logged-in account can enroll and learn.
@@ -376,20 +377,31 @@ router.post("/quizzes/:id/attempts", async (req, res) => {
   });
 });
 
-// POST /api/learn/courses/:slug/builtin-quizzes/:quizId/attempts — { score, total }.
-// Records a built-in course quiz (graded in the browser) for progress and dashboards.
-router.post("/courses/:slug/builtin-quizzes/:quizId/attempts", requireEnrolled, async (req, res) => {
-  if (!isSlug(req.params.quizId)) throw badRequest("Unknown quiz.");
-  const total = integer(req.body?.total, { min: 1, max: 200, label: "Total" });
-  const score = integer(req.body?.score, { min: 0, max: total, label: "Score" });
+// POST /api/learn/courses/:slug/builtin-quizzes/:quizId/grade — { answers: { [questionId]: optionId } }.
+// Grades a catalog quiz against the catalog database and returns the score,
+// the correct options and the explanations. Anyone logged in can check their
+// answers; the score is saved only for students who joined the course, under
+// the same keys as before (course_slug + "builtin:<quiz slug>"), so earlier
+// scores and dashboards carry on unchanged.
+router.post("/courses/:slug/builtin-quizzes/:quizId/grade", async (req, res) => {
+  const course = await findCourse(slugParam(req));
+  const quiz = course && (await loadQuiz(course.id, req.params.quizId));
+  if (!quiz) return res.status(404).json({ error: "Quiz not found.", code: "QUIZ_NOT_FOUND" });
+  const answers = req.body?.answers;
+  if (!answers || typeof answers !== "object" || Array.isArray(answers)) throw badRequest("Send your answers.");
+
+  const result = grade(quiz, answers);
+  if (!(await isEnrolled(req.user.id, course.slug))) {
+    return res.json({ ...result, saved: false, code: "NOT_ENROLLED" });
+  }
   await db.query("INSERT INTO quiz_attempts (student_id, course_slug, quiz_key, score, total) VALUES (?, ?, ?, ?, ?)", [
     req.user.id,
-    req.params.slug,
-    `builtin:${req.params.quizId}`,
-    score,
-    total,
+    course.slug,
+    `builtin:${quiz.slug}`,
+    result.score,
+    result.total,
   ]);
-  res.status(201).json({ ok: true });
+  res.json({ ...result, saved: true });
 });
 
 export default router;

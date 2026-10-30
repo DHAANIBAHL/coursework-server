@@ -12,7 +12,10 @@ const courseColumns = `
   c.id, c.slug, c.title, c.description, c.image_url, c.color, cat.name AS category,
   (SELECT COUNT(*) FROM modules m WHERE m.course_id = c.id) AS module_count,
   (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id) AS lesson_count,
-  (SELECT COUNT(*) FROM quizzes q WHERE q.course_id = c.id AND q.origin = 'catalog' AND q.published) AS quiz_count`;
+  (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id AND l.video_url IS NOT NULL) AS video_count,
+  (SELECT COUNT(*) FROM quizzes q WHERE q.course_id = c.id AND q.origin = 'catalog' AND q.published) AS quiz_count,
+  (SELECT COUNT(*) FROM quiz_questions qq JOIN quizzes q ON q.id = qq.quiz_id
+    WHERE q.course_id = c.id AND q.origin = 'catalog' AND q.published) AS question_count`;
 
 const course = (c) => ({
   id: c.id,
@@ -24,7 +27,9 @@ const course = (c) => ({
   color: c.color,
   moduleCount: c.module_count,
   lessonCount: c.lesson_count,
+  videoCount: c.video_count, // lessons with a video
   quizCount: c.quiz_count,
+  questionCount: c.question_count, // across its quizzes
 });
 
 // GET /api/courses — every published course, in catalog order.

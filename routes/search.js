@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { catalogDb } from "../db.js";
+import { VISIBLE_QUIZ } from "../lib/catalog.js";
 
 // GET /api/search?q=flexbox — searches every published course, lesson and
 // quiz in the catalog database. Public, like the catalog it reads.
@@ -27,7 +28,7 @@ async function loadEntries() {
     catalogDb.query(
       `SELECT q.course_id, q.slug, q.title, q.description
          FROM quizzes q JOIN courses c ON c.id = q.course_id
-        WHERE c.status = 'published' AND q.origin = 'catalog' AND q.published ORDER BY q.course_id, q.id`
+        WHERE c.status = 'published' AND ${VISIBLE_QUIZ} ORDER BY q.course_id, q.id`
     ),
   ]);
 

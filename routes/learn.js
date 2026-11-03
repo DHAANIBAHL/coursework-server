@@ -68,6 +68,7 @@ router.get("/enrollments", async (req, res) => {
 
 router.post("/courses/:slug/enroll", async (req, res) => {
   const slug = slugParam(req);
+  if (!(await findCourse(slug))) return res.status(404).json({ error: "Course not found.", code: "COURSE_NOT_FOUND" });
   await db.query("INSERT IGNORE INTO enrollments (student_id, course_slug) VALUES (?, ?)", [req.user.id, slug]);
   res.status(201).json({ ok: true });
 });
@@ -82,6 +83,9 @@ router.delete("/courses/:slug/enroll", async (req, res) => {
 // PUT/DELETE /api/learn/courses/:slug/lessons/:index — mark a lesson complete or not.
 router.put("/courses/:slug/lessons/:index", requireEnrolled, async (req, res) => {
   const index = integer(req.params.index, { min: 0, max: 999, label: "Lesson" });
+  const course = await findCourse(req.params.slug);
+  if (!course) return res.status(404).json({ error: "Course not found.", code: "COURSE_NOT_FOUND" });
+  if (index >= course.lesson_count) throw badRequest(`This course has ${course.lesson_count} lesson${course.lesson_count === 1 ? "" : "s"}.`);
   await db.query("INSERT IGNORE INTO lesson_progress (student_id, course_slug, lesson_index) VALUES (?, ?, ?)", [
     req.user.id,
     req.params.slug,

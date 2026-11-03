@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { catalogDb } from "../db.js";
 import { isSlug } from "../lib/classroom.js";
-import { findCourse, loadQuiz, withoutAnswers } from "../lib/catalog.js";
+import { VISIBLE_QUIZ, findCourse, loadQuiz, withoutAnswers } from "../lib/catalog.js";
 
 // The course catalog, read from the data-model database (CATALOG_DB_NAME,
 // learning_platform by default). Read-only and public: the same content
@@ -13,9 +13,9 @@ const courseColumns = `
   (SELECT COUNT(*) FROM modules m WHERE m.course_id = c.id) AS module_count,
   (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id) AS lesson_count,
   (SELECT COUNT(*) FROM lessons l WHERE l.course_id = c.id AND l.video_url IS NOT NULL) AS video_count,
-  (SELECT COUNT(*) FROM quizzes q WHERE q.course_id = c.id AND q.origin = 'catalog' AND q.published) AS quiz_count,
+  (SELECT COUNT(*) FROM quizzes q WHERE q.course_id = c.id AND ${VISIBLE_QUIZ}) AS quiz_count,
   (SELECT COUNT(*) FROM quiz_questions qq JOIN quizzes q ON q.id = qq.quiz_id
-    WHERE q.course_id = c.id AND q.origin = 'catalog' AND q.published) AS question_count`;
+    WHERE q.course_id = c.id AND ${VISIBLE_QUIZ}) AS question_count`;
 
 const course = (c) => ({
   id: c.id,
@@ -69,7 +69,7 @@ router.get("/:id", async (req, res) => {
       `SELECT q.id, q.slug, q.title, q.description,
               (SELECT COUNT(*) FROM quiz_questions qq WHERE qq.quiz_id = q.id) AS question_count
          FROM quizzes q
-        WHERE q.course_id = ? AND q.origin = 'catalog' AND q.published
+        WHERE q.course_id = ? AND ${VISIBLE_QUIZ}
         ORDER BY q.id`,
       [row.id]
     ),

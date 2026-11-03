@@ -15,6 +15,7 @@ import fs from "fs";
 import path from "path";
 import bcrypt from "bcryptjs";
 import { catalogDb, db } from "../db.js";
+import { VISIBLE_QUIZ } from "../lib/catalog.js";
 import { cleanQuestions } from "../lib/classroom.js";
 import { UPLOAD_DIR } from "../lib/uploads.js";
 import * as demo from "./demo-data.js";
@@ -151,7 +152,7 @@ async function loadCourses() {
         `SELECT q.course_id, q.slug, last.position AS end,
                 (SELECT COUNT(*) FROM quiz_questions qq WHERE qq.quiz_id = q.id) AS question_count
            FROM quizzes q LEFT JOIN lessons last ON last.id = q.last_lesson_id
-          WHERE q.origin = 'catalog' AND q.published ORDER BY q.course_id, q.id`
+          WHERE ${VISIBLE_QUIZ} ORDER BY q.course_id, q.id`
       ),
     ]);
   } catch (err) {
